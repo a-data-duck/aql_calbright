@@ -1,11 +1,4 @@
-# Core dependencies
-langchain==0.0.335
-langchain-openai==0.0.2
-langchain-community==0.0.10
-openai==1.3.7
-streamlit==1.28.0
-tiktoken==0.5.1
-
-# Explicitly remove old package and install new one
-pinecone-client==0.0.0
+streamlit==1.31.0
+openai==1.12.0
 pinecone==2.2.4
+langchain==0.0.308
