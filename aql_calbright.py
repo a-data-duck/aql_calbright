@@ -9,7 +9,6 @@ st.title("Calbright College Q&A")
 OPENAI_API_KEY = st.secrets.get("OPENAI_API_KEY", "")
 PINECONE_API_KEY = st.secrets.get("PINECONE_API_KEY", "")
 PINECONE_INDEX_NAME = st.secrets.get("PINECONE_INDEX_NAME", "calbright-docs")
-PINECONE_ENV = "us-east-1"
 
 if not OPENAI_API_KEY or not PINECONE_API_KEY:
     st.error("Missing API keys. Please set them in your Streamlit secrets.")
@@ -41,7 +40,13 @@ def get_embedding(text):
     return result["data"][0]["embedding"]
 
 # Function to query Pinecone directly via API
-def query_pinecone(vector, top_k=3):
+def query_pinecone(vector, base_url, top_k=3):
+    # Make sure the URL ends with /query
+    if not base_url.endswith("/query"):
+        query_url = f"{base_url}/query"
+    else:
+        query_url = base_url
+    
     headers = {
         "Content-Type": "application/json",
         "Api-Key": PINECONE_API_KEY
@@ -53,23 +58,40 @@ def query_pinecone(vector, top_k=3):
         "include_metadata": True
     }
     
-    # FIXED URL FORMAT - removed the extra https://
-    pinecone_url = f"https://{PINECONE_INDEX_NAME}-{PINECONE_ENV}.svc.{PINECONE_ENV}.pinecone.io/query"
+    st.info(f"Connecting to Pinecone at: {query_url}")
     
-    st.write(f"Debug - Using Pinecone URL: {pinecone_url}")
-    
-    response = requests.post(
-        pinecone_url,
-        headers=headers,
-        json=data
-    )
-    
-    if response.status_code != 200:
-        st.error(f"Pinecone API error: {response.text}")
+    try:
+        response = requests.post(
+            query_url,
+            headers=headers,
+            json=data,
+            timeout=10  # Add timeout
+        )
+        
+        # Debug info
+        st.write(f"Status code: {response.status_code}")
+        
+        if response.status_code != 200:
+            st.error(f"Pinecone API error: {response.text}")
+            return []
+        
+        # Check if response is empty
+        if not response.text:
+            st.error("Pinecone returned an empty response")
+            return []
+            
+        # Try to parse the JSON
+        try:
+            result = response.json()
+            return result.get("matches", [])
+        except json.JSONDecodeError as e:
+            st.error(f"Failed to parse JSON: {e}")
+            st.write(f"Raw response: {response.text[:500]}...")  # Show first 500 chars
+            return []
+            
+    except requests.exceptions.RequestException as e:
+        st.error(f"Request error: {e}")
         return []
-    
-    result = response.json()
-    return result.get("matches", [])
 
 # Function to generate answer via OpenAI API
 def generate_answer(question, context):
@@ -106,48 +128,50 @@ def generate_answer(question, context):
     result = response.json()
     return result["choices"][0]["message"]["content"]
 
-# Add option to manually enter Pinecone URL
-pinecone_url_format = st.sidebar.radio(
-    "Pinecone URL Format",
-    ["Standard", "Serverless", "Custom"],
-    index=0
+# Pinecone configuration
+st.sidebar.header("Pinecone Configuration")
+pinecone_url = st.sidebar.text_input(
+    "Pinecone URL:",
+    value="https://calbright-docs-h3y3rrq.svc.aped-4627-b74a.pinecone.io"
 )
 
-if pinecone_url_format == "Custom":
-    custom_url = st.sidebar.text_input(
-        "Enter full Pinecone URL:",
-        value=f"https://{PINECONE_INDEX_NAME}.svc.{PINECONE_ENV}.pinecone.io/query"
-    )
+# Test Pinecone connection button
+if st.sidebar.button("Test Pinecone Connection"):
+    test_headers = {
+        "Content-Type": "application/json",
+        "Api-Key": PINECONE_API_KEY
+    }
     
-    def query_pinecone_custom(vector, top_k=3):
-        headers = {
-            "Content-Type": "application/json",
-            "Api-Key": PINECONE_API_KEY
+    # Try adding /query if not present
+    if not pinecone_url.endswith("/query"):
+        test_url = f"{pinecone_url}/query"
+    else:
+        test_url = pinecone_url
+    
+    try:
+        # Just a simple describe request to test connection
+        test_vector = [0.0] * 1536  # Sample embedding with all zeros
+        test_data = {
+            "vector": test_vector,
+            "top_k": 1
         }
         
-        data = {
-            "vector": vector,
-            "top_k": top_k,
-            "include_metadata": True
-        }
-        
-        st.write(f"Debug - Using custom URL: {custom_url}")
-        
-        response = requests.post(
-            custom_url,
-            headers=headers,
-            json=data
+        test_response = requests.post(
+            test_url,
+            headers=test_headers,
+            json=test_data,
+            timeout=10
         )
         
-        if response.status_code != 200:
-            st.error(f"Pinecone API error: {response.text}")
-            return []
+        st.sidebar.write(f"Status: {test_response.status_code}")
         
-        result = response.json()
-        return result.get("matches", [])
-    
-    # Override the query function
-    query_pinecone = query_pinecone_custom
+        if test_response.status_code == 200:
+            st.sidebar.success("Successfully connected to Pinecone!")
+        else:
+            st.sidebar.error(f"Failed to connect: {test_response.text}")
+        
+    except Exception as e:
+        st.sidebar.error(f"Connection error: {str(e)}")
 
 # Main interface
 st.write("Ask questions about Calbright College's programs, services, and more.")
@@ -179,9 +203,9 @@ if st.button("Submit"):
                     st.stop()
                 
                 # 2. Query Pinecone
-                matches = query_pinecone(embedding)
+                matches = query_pinecone(embedding, pinecone_url)
                 if not matches:
-                    st.warning("No relevant information found.")
+                    st.warning("No relevant information found. Please check the Pinecone connection.")
                     st.stop()
                 
                 # 3. Format context
