@@ -53,8 +53,13 @@ def query_pinecone(vector, top_k=3):
         "include_metadata": True
     }
     
+    # FIXED URL FORMAT - removed the extra https://
+    pinecone_url = f"https://{PINECONE_INDEX_NAME}-{PINECONE_ENV}.svc.{PINECONE_ENV}.pinecone.io/query"
+    
+    st.write(f"Debug - Using Pinecone URL: {pinecone_url}")
+    
     response = requests.post(
-        f"https://https://{PINECONE_INDEX_NAME}-{PINECONE_ENV}.svc.{PINECONE_ENV}.pinecone.io/query",
+        pinecone_url,
         headers=headers,
         json=data
     )
@@ -100,6 +105,49 @@ def generate_answer(question, context):
     
     result = response.json()
     return result["choices"][0]["message"]["content"]
+
+# Add option to manually enter Pinecone URL
+pinecone_url_format = st.sidebar.radio(
+    "Pinecone URL Format",
+    ["Standard", "Serverless", "Custom"],
+    index=0
+)
+
+if pinecone_url_format == "Custom":
+    custom_url = st.sidebar.text_input(
+        "Enter full Pinecone URL:",
+        value=f"https://{PINECONE_INDEX_NAME}.svc.{PINECONE_ENV}.pinecone.io/query"
+    )
+    
+    def query_pinecone_custom(vector, top_k=3):
+        headers = {
+            "Content-Type": "application/json",
+            "Api-Key": PINECONE_API_KEY
+        }
+        
+        data = {
+            "vector": vector,
+            "top_k": top_k,
+            "include_metadata": True
+        }
+        
+        st.write(f"Debug - Using custom URL: {custom_url}")
+        
+        response = requests.post(
+            custom_url,
+            headers=headers,
+            json=data
+        )
+        
+        if response.status_code != 200:
+            st.error(f"Pinecone API error: {response.text}")
+            return []
+        
+        result = response.json()
+        return result.get("matches", [])
+    
+    # Override the query function
+    query_pinecone = query_pinecone_custom
 
 # Main interface
 st.write("Ask questions about Calbright College's programs, services, and more.")
