@@ -58,7 +58,7 @@ def query_pinecone(vector, base_url, top_k=3):
         "include_metadata": True
     }
     
-    st.info(f"Connecting to Pinecone at: {query_url}")
+    # Removed debug info
     
     try:
         response = requests.post(
@@ -68,8 +68,7 @@ def query_pinecone(vector, base_url, top_k=3):
             timeout=10  # Add timeout
         )
         
-        # Debug info
-        st.write(f"Status code: {response.status_code}")
+        # Removed status code output
         
         if response.status_code != 200:
             st.error(f"Pinecone API error: {response.text}")
