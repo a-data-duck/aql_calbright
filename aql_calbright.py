@@ -11,7 +11,7 @@ from langchain.chains import RetrievalQA
 # Accessed via st.secrets
 OPENAI_API_KEY = st.secrets.get("OPENAI_API_KEY")
 PINECONE_API_KEY = st.secrets.get("PINECONE_API_KEY")
-PINECONE_ENV = st.secrets.get("PINECONE_ENV", "us-west1-gcp")
+PINECONE_ENV = st.secrets.get("PINECONE_ENV", "us-east-1")
 INDEX_NAME = st.secrets.get("PINECONE_INDEX_NAME", "calbright-docs")
 
 if not OPENAI_API_KEY or not PINECONE_API_KEY:
