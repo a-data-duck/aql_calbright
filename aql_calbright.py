@@ -2,16 +2,38 @@ import streamlit as st
 import json
 import requests
 
+# Hide sidebar
+st.set_page_config(page_title="Calbright College Q&A", page_icon="🎓", initial_sidebar_state="collapsed")
+
+# Custom CSS to hide the sidebar completely
+st.markdown("""
+<style>
+    [data-testid="collapsedControl"] {display: none;}
+    section[data-testid="stSidebar"] {display: none;}
+    .big-font {
+        font-size: 24px;
+        line-height: 1.5;
+        margin-bottom: 20px;
+    }
+    .small-italic {
+        font-size: 14px;
+        font-style: italic;
+        color: #666;
+        margin-top: 20px;
+    }
+</style>
+""", unsafe_allow_html=True)
+
 # Set title
 st.title("Calbright College Q&A")
 
-# Configure API keys
+# Configure API keys (now hidden from sidebar)
 OPENAI_API_KEY = st.secrets.get("OPENAI_API_KEY", "")
 PINECONE_API_KEY = st.secrets.get("PINECONE_API_KEY", "")
-PINECONE_INDEX_NAME = st.secrets.get("PINECONE_INDEX_NAME", "calbright-docs")
+PINECONE_URL = "https://calbright-docs-h3y3rrq.svc.aped-4627-b74a.pinecone.io"
 
 if not OPENAI_API_KEY or not PINECONE_API_KEY:
-    st.error("Missing API keys. Please set them in your Streamlit secrets.")
+    st.error("Missing API keys. Please contact the administrator.")
     st.stop()
 
 # Function to get embedding directly via API
@@ -58,17 +80,13 @@ def query_pinecone(vector, base_url, top_k=3):
         "include_metadata": True
     }
     
-    # Removed debug info
-    
     try:
         response = requests.post(
             query_url,
             headers=headers,
             json=data,
-            timeout=10  # Add timeout
+            timeout=10
         )
-        
-        # Removed status code output
         
         if response.status_code != 200:
             st.error(f"Pinecone API error: {response.text}")
@@ -85,7 +103,6 @@ def query_pinecone(vector, base_url, top_k=3):
             return result.get("matches", [])
         except json.JSONDecodeError as e:
             st.error(f"Failed to parse JSON: {e}")
-            st.write(f"Raw response: {response.text[:500]}...")  # Show first 500 chars
             return []
             
     except requests.exceptions.RequestException as e:
@@ -127,71 +144,29 @@ def generate_answer(question, context):
     result = response.json()
     return result["choices"][0]["message"]["content"]
 
-# Pinecone configuration
-st.sidebar.header("Pinecone Configuration")
-pinecone_url = st.sidebar.text_input(
-    "Pinecone URL:",
-    value="https://calbright-docs-h3y3rrq.svc.aped-4627-b74a.pinecone.io"
-)
-
-# Test Pinecone connection button
-if st.sidebar.button("Test Pinecone Connection"):
-    test_headers = {
-        "Content-Type": "application/json",
-        "Api-Key": PINECONE_API_KEY
-    }
-    
-    # Try adding /query if not present
-    if not pinecone_url.endswith("/query"):
-        test_url = f"{pinecone_url}/query"
-    else:
-        test_url = pinecone_url
-    
-    try:
-        # Just a simple describe request to test connection
-        test_vector = [0.0] * 1536  # Sample embedding with all zeros
-        test_data = {
-            "vector": test_vector,
-            "top_k": 1
-        }
-        
-        test_response = requests.post(
-            test_url,
-            headers=test_headers,
-            json=test_data,
-            timeout=10
-        )
-        
-        st.sidebar.write(f"Status: {test_response.status_code}")
-        
-        if test_response.status_code == 200:
-            st.sidebar.success("Successfully connected to Pinecone!")
-        else:
-            st.sidebar.error(f"Failed to connect: {test_response.text}")
-        
-    except Exception as e:
-        st.sidebar.error(f"Connection error: {str(e)}")
-
 # Main interface
 st.write("Ask questions about Calbright College's programs, services, and more.")
 
-# Example questions
-st.sidebar.header("Example Questions")
-examples = [
-    "Who provides wellness services at Calbright?",
-    "What programs does Calbright offer?",
-    "Is Calbright College free?",
-    "How long does it take to complete a program?"
-]
-
-selected_example = st.sidebar.selectbox("Try an example:", [""] + examples)
+# Example questions moved to main interface as buttons
+st.write("Try an example:")
+col1, col2 = st.columns(2)
+with col1:
+    if st.button("Who provides wellness services?"):
+        question = "Who provides wellness services at Calbright?"
+    elif st.button("Is Calbright College free?"):
+        question = "Is Calbright College free?"
+with col2:
+    if st.button("What programs are offered?"):
+        question = "What programs does Calbright offer?"
+    elif st.button("How long to complete a program?"):
+        question = "How long does it take to complete a program?"
 
 # Question input
-question = st.text_input("Your question:", value=selected_example)
+question = st.text_input("Or type your own question:")
 
-if st.button("Submit"):
+if st.button("Submit") or "question" in locals():
     if not question:
-        st.warning("Please enter a question.")
+        st.warning("Please enter a question or select an example.")
     else:
         try:
             with st.spinner("Searching for information..."):
@@ -202,9 +177,9 @@ if st.button("Submit"):
                     st.stop()
                 
                 # 2. Query Pinecone
-                matches = query_pinecone(embedding, pinecone_url)
+                matches = query_pinecone(embedding, PINECONE_URL)
                 if not matches:
-                    st.warning("No relevant information found. Please check the Pinecone connection.")
+                    st.warning("No relevant information found.")
                     st.stop()
                 
                 # 3. Format context
@@ -223,12 +198,11 @@ if st.button("Submit"):
                 # 4. Generate answer
                 answer = generate_answer(question, context)
                 
-                # 5. Display answer
-                st.subheader("Answer")
-                st.write(answer)
+                # 5. Display answer in larger font (without a heading)
+                st.markdown(f'<div class="big-font">{answer}</div>', unsafe_allow_html=True)
                 
-                # 6. Display sources
-                st.subheader("Sources")
+                # 6. Display sources with smaller, italicized heading
+                st.markdown('<div class="small-italic">sources</div>', unsafe_allow_html=True)
                 for i, (title, url) in enumerate(sources):
                     st.write(f"{i+1}. {title}")
                     st.write(f"URL: {url}")
@@ -237,7 +211,3 @@ if st.button("Submit"):
         except Exception as e:
             st.error(f"An error occurred: {str(e)}")
             st.write("Please try again later.")
-
-# Footer
-st.sidebar.markdown("---")
-st.sidebar.info("This is a demo of a Calbright College information chatbot.")
