@@ -150,7 +150,7 @@ Be specific about services, programs, and resources offered by Calbright.
 When answering about services like wellness services, ALWAYS mention the specific provider (like TimelyCare) if it appears in the context."""
     
     data = {
-        "model": "gpt-3.5-turbo",
+        "model": "gpt-4.1-mini",
         "messages": [
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": f"Context:\n{context}\n\nQuestion: {question}\n\nAnswer:"}
