@@ -1,8 +1,10 @@
 import os
 import streamlit as st
+
 from openai import OpenAI
-from pinecone import Pinecone, ServerlessSpec
-from langchain.embeddings import OpenAIEmbeddings
+from pinecone import Pinecone
+
+from langchain.embeddings.openai import OpenAIEmbeddings
 from langchain.vectorstores import Pinecone as LC_Pinecone
 from langchain.chat_models import ChatOpenAI
 from langchain.chains import RetrievalQA
