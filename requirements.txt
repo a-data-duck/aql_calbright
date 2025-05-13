@@ -1,5 +1,6 @@
-openai==0.27.8
-langchain==0.0.297
-pinecone>=1.5.0
-tiktoken
-streamlit>=1.24.0
+langchain>=0.0.335
+langchain-openai>=0.0.2
+pinecone-client>=2.2.4
+openai>=1.3.7
+streamlit>=1.28.0
+tiktoken>=0.5.1
