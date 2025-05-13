@@ -24,6 +24,10 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
+# Initialize session state for question
+if "question" not in st.session_state:
+    st.session_state.question = ""
+
 # Set title
 st.title("Calbright College Q&A")
 
@@ -61,13 +65,28 @@ def get_embedding(text):
     result = response.json()
     return result["data"][0]["embedding"]
 
-# Function to query Pinecone directly via API
-def query_pinecone(vector, base_url, top_k=3):
+# Function for hybrid search - combine keywords and vectors
+def hybrid_search(query, base_url, top_k=5):
     # Make sure the URL ends with /query
     if not base_url.endswith("/query"):
         query_url = f"{base_url}/query"
     else:
         query_url = base_url
+    
+    # Step 1: Generate embedding for vector search
+    embedding = get_embedding(query)
+    if not embedding:
+        return []
+
+    # Step 2: Prepare keywords from query for boosting relevant results
+    keywords = query.lower().split()
+    # Add specific terms that might be important
+    if "wellness" in query.lower() or "health" in query.lower():
+        keywords.extend(["timelycare", "wellness", "services", "health"])
+    if "program" in query.lower() or "study" in query.lower():
+        keywords.extend(["certificate", "program", "course"])
+    if "free" in query.lower() or "cost" in query.lower():
+        keywords.extend(["tuition", "free", "cost", "financial"])
     
     headers = {
         "Content-Type": "application/json",
@@ -75,8 +94,8 @@ def query_pinecone(vector, base_url, top_k=3):
     }
     
     data = {
-        "vector": vector,
-        "top_k": top_k,
+        "vector": embedding,
+        "top_k": top_k * 2,  # Retrieve more than needed for filtering
         "include_metadata": True
     }
     
@@ -92,21 +111,29 @@ def query_pinecone(vector, base_url, top_k=3):
             st.error(f"Pinecone API error: {response.text}")
             return []
         
-        # Check if response is empty
-        if not response.text:
-            st.error("Pinecone returned an empty response")
-            return []
+        # Parse results
+        result = response.json()
+        matches = result.get("matches", [])
+        
+        # Now boost relevance scores based on keyword presence
+        for match in matches:
+            text = match.get("metadata", {}).get("text", "").lower()
             
-        # Try to parse the JSON
-        try:
-            result = response.json()
-            return result.get("matches", [])
-        except json.JSONDecodeError as e:
-            st.error(f"Failed to parse JSON: {e}")
-            return []
+            # Calculate keyword boost factor
+            keyword_matches = sum(1 for keyword in keywords if keyword in text)
+            keyword_boost = keyword_matches * 0.1  # Each keyword match adds 0.1 to score
             
-    except requests.exceptions.RequestException as e:
-        st.error(f"Request error: {e}")
+            # Apply the boost to the score (keeping it under 1.0)
+            match["score"] = min(match["score"] + keyword_boost, 1.0)
+        
+        # Re-sort matches by adjusted score
+        matches.sort(key=lambda x: x["score"], reverse=True)
+        
+        # Return top k matches
+        return matches[:top_k]
+            
+    except Exception as e:
+        st.error(f"Search error: {e}")
         return []
 
 # Function to generate answer via OpenAI API
@@ -116,17 +143,17 @@ def generate_answer(question, context):
         "Authorization": f"Bearer {OPENAI_API_KEY}"
     }
     
+    # Enhanced prompt to focus on specific information
+    system_prompt = """You are a helpful assistant for Calbright College, a fully online California community college.
+Answer questions based ONLY on the provided context. If you don't know the answer, say so.
+Be specific about services, programs, and resources offered by Calbright.
+When answering about services like wellness services, ALWAYS mention the specific provider (like TimelyCare) if it appears in the context."""
+    
     data = {
         "model": "gpt-3.5-turbo",
         "messages": [
-            {
-                "role": "system", 
-                "content": "You are a helpful assistant for Calbright College, a fully online California community college. Answer questions based ONLY on the provided context."
-            },
-            {
-                "role": "user", 
-                "content": f"Context:\n{context}\n\nQuestion: {question}\n\nAnswer:"
-            }
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": f"Context:\n{context}\n\nQuestion: {question}\n\nAnswer:"}
         ],
         "temperature": 0.2
     }
@@ -150,39 +177,43 @@ st.write("Ask questions about Calbright College's programs, services, and more."
 # Example questions moved to main interface as buttons
 st.write("Try an example:")
 col1, col2 = st.columns(2)
+
+# Helper function to set question in session state
+def set_question(text):
+    st.session_state.question = text
+
 with col1:
     if st.button("Who provides wellness services?"):
-        question = "Who provides wellness services at Calbright?"
-    elif st.button("Is Calbright College free?"):
-        question = "Is Calbright College free?"
+        set_question("Who provides wellness services at Calbright?")
+    if st.button("Is Calbright College free?"):
+        set_question("Is Calbright College free?")
 with col2:
     if st.button("What programs are offered?"):
-        question = "What programs does Calbright offer?"
-    elif st.button("How long to complete a program?"):
-        question = "How long does it take to complete a program?"
+        set_question("What programs does Calbright offer?")
+    if st.button("How long to complete a program?"):
+        set_question("How long does it take to complete a program?")
 
 # Question input
-question = st.text_input("Or type your own question:")
+question_input = st.text_input("Or type your own question:", value=st.session_state.question)
 
-if st.button("Submit") or "question" in locals():
-    if not question:
+# Update session state if user types a question
+if question_input != st.session_state.question:
+    st.session_state.question = question_input
+
+# Submit button
+if st.button("Submit") or (st.session_state.question and not question_input):
+    if not st.session_state.question:
         st.warning("Please enter a question or select an example.")
     else:
         try:
             with st.spinner("Searching for information..."):
-                # 1. Generate embedding
-                embedding = get_embedding(question)
-                if not embedding:
-                    st.error("Could not generate embedding.")
-                    st.stop()
-                
-                # 2. Query Pinecone
-                matches = query_pinecone(embedding, PINECONE_URL)
+                # Use hybrid search for better results
+                matches = hybrid_search(st.session_state.question, PINECONE_URL)
                 if not matches:
                     st.warning("No relevant information found.")
                     st.stop()
                 
-                # 3. Format context
+                # Format context
                 context = ""
                 sources = []
                 
@@ -195,13 +226,13 @@ if st.button("Submit") or "question" in locals():
                     context += f"\nDocument {i+1}:\n{text}\n"
                     sources.append((title, url))
                 
-                # 4. Generate answer
-                answer = generate_answer(question, context)
+                # Generate answer
+                answer = generate_answer(st.session_state.question, context)
                 
-                # 5. Display answer in larger font (without a heading)
+                # Display answer in larger font (without a heading)
                 st.markdown(f'<div class="big-font">{answer}</div>', unsafe_allow_html=True)
                 
-                # 6. Display sources with smaller, italicized heading
+                # Display sources with smaller, italicized heading
                 st.markdown('<div class="small-italic">sources</div>', unsafe_allow_html=True)
                 for i, (title, url) in enumerate(sources):
                     st.write(f"{i+1}. {title}")
@@ -211,6 +242,7 @@ if st.button("Submit") or "question" in locals():
         except Exception as e:
             st.error(f"An error occurred: {str(e)}")
             st.write("Please try again later.")
+            st.write(f"Error details: {str(e)}")
 
 
 '''
