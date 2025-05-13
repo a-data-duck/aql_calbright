@@ -5,22 +5,69 @@ import requests
 # Hide sidebar
 st.set_page_config(page_title="Calbright College Q&A", page_icon="🎓", initial_sidebar_state="collapsed")
 
+# Add logo in the upper right corner
+st.markdown("""
+<img src="https://www.calbright.edu/wp-content/uploads/2022/06/calbright_logo-post-sq-white.png?text=Logo" style="position: absolute; top: 20px; right: 20px; width: 80px; z-index: 1000;">
+""", unsafe_allow_html=True)
+
 # Custom CSS to hide the sidebar completely
 st.markdown("""
 <style>
-    [data-testid="collapsedControl"] {display: none;}
-    section[data-testid="stSidebar"] {display: none;}
-    .big-font {
-        font-size: 24px;
-        line-height: 1.5;
-        margin-bottom: 20px;
-    }
-    .small-italic {
-        font-size: 14px;
-        font-style: italic;
-        color: #666;
-        margin-top: 20px;
-    }
+  /* 1) Import fonts */
+  @import url('https://fonts.googleapis.com/css2?family=Source+Serif+4:wght@400&display=swap');
+  @import url('https://fonts.googleapis.com/css2?family=Bebas+Neue&display=swap');
+  @import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500&display=swap');
+
+  /* 2) Yellow backdrop outside the main container */
+  .stApp {
+    background-color: #FFC629 !important;
+    padding: 30px;
+  }
+
+  /* 3) Centered white box at 60% width with border */
+  .block-container {
+    max-width: 60% !important;
+    margin: 0 auto !important;
+    background-color: white !important;
+    border: 1px solid #333 !important;
+    border-radius: 8px !important;
+    padding: 30px !important;
+    box-shadow: 0 4px 8px rgba(0,0,0,0.1) !important;
+  }
+
+  /* 4) Font assignments */
+  body, .stApp, p, div, h1, h2, h3, span, .stMarkdown, .stTextInput, input {
+    font-family: 'Source Serif 4', serif !important;
+  }
+  .bebas-text {
+    font-family: 'Bebas Neue', sans-serif !important;
+    font-size: 24px;
+    line-height: 1.2;
+  }
+  .stButton > button {
+    font-family: 'DM Sans', sans-serif !important;
+  }
+
+  /* 5) Default all buttons light gray */
+  .stButton > button {
+    background-color: #f0f0f0 !important;
+    color: #000 !important;
+    border-color: #ccc !important;
+  }
+
+  /* 6) Override only the Submit button */
+  /* Use the Streamlit attribute for the form-submit button */
+  button[kind="formSubmit"] {
+    background-color: #1A23B3 !important;
+    color: #fff !important;
+    border-color: #1A23B3 !important;
+  }
+  /* A hook: pick the button immediately AFTER a <span id="blue-btn"> */
+  .element-container:has(#blue-btn) + div button {
+    background-color: #000080 !important;
+    color: white !important;
+    border-color: #000080 !important;
+  }
 </style>
 """, unsafe_allow_html=True)
 
@@ -202,6 +249,7 @@ if question_input != st.session_state.question:
     st.session_state.question = question_input
 
 # Submit button
+st.markdown('<span id="blue-btn"></span>', unsafe_allow_html=True)
 if st.button("Submit") or (st.session_state.question and not question_input):
     if not st.session_state.question:
         st.warning("Please enter a question or select an example.")
