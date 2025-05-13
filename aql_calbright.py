@@ -1,10 +1,7 @@
-import os
 import streamlit as st
-from langchain_community.vectorstores import Pinecone as LC_Pinecone
-from langchain_openai import ChatOpenAI, OpenAIEmbeddings
-from langchain.chains import RetrievalQA
-from langchain.prompts import PromptTemplate
+import openai
 import pinecone
+import os
 
 # --- Streamlit secrets/config ---
 OPENAI_API_KEY = st.secrets.get("OPENAI_API_KEY")
@@ -15,31 +12,53 @@ if not OPENAI_API_KEY or not PINECONE_API_KEY:
     st.error("API keys not configured. Please set OPENAI_API_KEY and PINECONE_API_KEY in your app secrets.")
     st.stop()
 
-# --- Initialize Pinecone client (updated for newer SDK) ---
+# Initialize OpenAI client
+openai.api_key = OPENAI_API_KEY
+client = openai.OpenAI(api_key=OPENAI_API_KEY)
+
+# Initialize Pinecone
 try:
-    pc = pinecone.Pinecone(api_key=PINECONE_API_KEY)
-    index = pc.Index(PINECONE_INDEX_NAME)
-    st.session_state.pinecone_initialized = True
+    pinecone.init(api_key=PINECONE_API_KEY, environment="us-east-1") 
+    index = pinecone.Index(PINECONE_INDEX_NAME)
+    st.success("Connected to Pinecone successfully!")
 except Exception as e:
     st.error(f"Error initializing Pinecone: {e}")
     st.stop()
 
-# --- Setup LangChain components with better exception handling ---
-try:
-    embeddings = OpenAIEmbeddings(openai_api_key=OPENAI_API_KEY)
-    
-    # Create a Pinecone vector store
-    vectorstore = LC_Pinecone(
-        index=index,
-        embedding_function=embeddings.embed_query,
-        text_key="text"
+def get_embedding(text):
+    response = client.embeddings.create(
+        model="text-embedding-ada-002",
+        input=text
     )
+    return response.data[0].embedding
+
+def search_pinecone(query_embedding, top_k=5):
+    results = index.query(
+        vector=query_embedding,
+        top_k=top_k,
+        include_metadata=True
+    )
+    return results.matches
+
+def format_context(matches):
+    context = ""
+    sources = []
     
-    # Create a retriever
-    retriever = vectorstore.as_retriever(search_kwargs={"k": 5})
+    for i, match in enumerate(matches):
+        metadata = match.metadata
+        context += f"\nDocument {i+1}:\n"
+        context += metadata.get("text", "No text available") + "\n"
+        
+        source = {
+            "title": metadata.get("title", "Unknown"),
+            "url": metadata.get("url", "N/A"),
+        }
+        sources.append(source)
     
-    # Create a custom prompt template
-    custom_prompt_template = """You are a helpful assistant for Calbright College, a fully online California community college.
+    return context, sources
+
+def generate_answer(query, context):
+    prompt = f"""You are a helpful assistant for Calbright College, a fully online California community college.
 Use the following pieces of context to answer the question at the end.
 If you don't know the answer, just say that you don't know, don't try to make up an answer.
 Always be helpful, friendly, and concise.
@@ -47,82 +66,51 @@ Always be helpful, friendly, and concise.
 Context:
 {context}
 
-Question: {question}
+Question: {query}
 Answer:"""
-
-    PROMPT = PromptTemplate(
-        template=custom_prompt_template, 
-        input_variables=["context", "question"]
+    
+    response = client.chat.completions.create(
+        model="gpt-3.5-turbo",
+        messages=[
+            {"role": "system", "content": "You are a helpful assistant for Calbright College."},
+            {"role": "user", "content": prompt}
+        ],
+        temperature=0.2
     )
     
-    # Setup LLM and QA chain with custom prompt
-    llm = ChatOpenAI(
-        temperature=0.2,
-        model_name="gpt-3.5-turbo",
-        openai_api_key=OPENAI_API_KEY
-    )
-    
-    qa = RetrievalQA.from_chain_type(
-        llm=llm,
-        chain_type="stuff",
-        retriever=retriever,
-        return_source_documents=True,
-        chain_type_kwargs={"prompt": PROMPT}
-    )
-    
-except Exception as e:
-    st.error(f"Error setting up LangChain components: {e}")
-    st.stop()
+    return response.choices[0].message.content
 
 # --- Streamlit UI ---
 st.set_page_config(page_title="Calbright Info Chatbot", page_icon="🎓")
 st.title("🎓 DEMO Calbright Info Chatbot")
 st.write("Ask questions about the college's admissions, policies, and services.")
 
-# Add some example questions as buttons
-st.write("Try one of these questions:")
-example_questions = [
-    "Who provides wellness services at Calbright?",
-    "What programs does Calbright offer?",
-    "What financial support is available to Calbright students?",
-    "How long does it take to complete a program at Calbright?"
-]
+# Text input for questions
+query = st.text_input("Enter your question:")
 
-# Create two columns for the example buttons
-cols = st.columns(2)
-for i, question in enumerate(example_questions):
-    col_idx = i % 2
-    if cols[col_idx].button(question):
-        st.session_state.query = question
-
-# Text input for custom questions
-query = st.text_input("Or enter your own question:", value=st.session_state.get("query", ""))
-
-if st.button("Ask") or ('query' in st.session_state and st.session_state.query):
-    # Get the query from session state if it exists, otherwise use the input
-    query_to_use = query or st.session_state.get("query", "")
-    
-    if query_to_use:
-        with st.spinner("Retrieving answer..."):
-            try:
-                result = qa({"query": query_to_use})
-                answer = result.get("result", "")
-                docs = result.get("source_documents", [])
-                
-                # Clear the session state query after using it
-                if 'query' in st.session_state:
-                    del st.session_state.query
-                    
-                st.subheader("Answer:")
-                st.write(answer)
-                
-                if docs:
-                    with st.expander("Sources"):
-                        for i, doc in enumerate(docs):
-                            md = doc.metadata
-                            st.markdown(f"**Source {i+1}:** {md.get('title', 'No title')}")
-                            st.markdown(f"**URL:** {md.get('url', 'N/A')}")
-                            st.markdown(f"**Chunk Index:** {md.get('chunk_index', '')}")
-                            st.markdown("---")
-            except Exception as e:
-                st.error(f"Error getting answer: {e}")
+if st.button("Ask") and query:
+    with st.spinner("Retrieving answer..."):
+        try:
+            # Get query embedding
+            query_embedding = get_embedding(query)
+            
+            # Search Pinecone
+            matches = search_pinecone(query_embedding)
+            
+            # Format context and get sources
+            context, sources = format_context(matches)
+            
+            # Generate answer
+            answer = generate_answer(query, context)
+            
+            st.subheader("Answer:")
+            st.write(answer)
+            
+            if sources:
+                with st.expander("Sources"):
+                    for i, source in enumerate(sources):
+                        st.markdown(f"**Source {i+1}:** {source['title']}")
+                        st.markdown(f"**URL:** {source['url']}")
+                        st.markdown("---")
+        except Exception as e:
+            st.error(f"Error getting answer: {e}")
