@@ -1,10 +1,9 @@
 import os
 import streamlit as st
-from langchain.vectorstores import Pinecone as LC_Pinecone
-from langchain.chat_models import ChatOpenAI
+from langchain_community.vectorstores import Pinecone as LC_Pinecone
+from langchain_openai import ChatOpenAI, OpenAIEmbeddings
 from langchain.chains import RetrievalQA
 from langchain.prompts import PromptTemplate
-from langchain.embeddings.openai import OpenAIEmbeddings
 import pinecone
 
 # --- Streamlit secrets/config ---
