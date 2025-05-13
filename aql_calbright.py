@@ -2,121 +2,84 @@ import streamlit as st
 import openai
 import pinecone
 
-# Set page configuration
-st.set_page_config(page_title="Calbright College Chatbot", page_icon="🎓")
-st.title("🎓 Calbright College Chatbot")
+# Simple app with minimal dependencies
+st.title("Calbright College Q&A")
 
-# Get API keys from Streamlit secrets
+# API keys
 try:
     openai.api_key = st.secrets["OPENAI_API_KEY"]
-    PINECONE_API_KEY = st.secrets["PINECONE_API_KEY"]
-    PINECONE_INDEX_NAME = st.secrets.get("PINECONE_INDEX_NAME", "calbright-docs")
+    pinecone_api_key = st.secrets["PINECONE_API_KEY"] 
+    pinecone_index = st.secrets.get("PINECONE_INDEX_NAME", "calbright-docs")
 except Exception as e:
-    st.error(f"Error with API keys: {e}")
+    st.error(f"API key error: {e}")
     st.stop()
 
-# Initialize Pinecone
+# Initialize Pinecone (older API style)
 try:
-    pinecone.init(api_key=PINECONE_API_KEY, environment="us-east-1")
-    index = pinecone.Index(PINECONE_INDEX_NAME)
+    pinecone.init(api_key=pinecone_api_key, environment="us-east-1")
+    index = pinecone.Index(pinecone_index)
+    st.success("Connected to services")
 except Exception as e:
-    st.error(f"Error initializing Pinecone: {e}")
+    st.error(f"Pinecone error: {e}")
+    st.info("Check your API keys and index name")
     st.stop()
 
-# Get embedding function
-def get_embedding(text):
-    response = openai.Embedding.create(
-        input=text, 
-        model="text-embedding-ada-002"
-    )
-    return response["data"][0]["embedding"]
+# Question input
+question = st.text_input("What would you like to know about Calbright College?")
 
-# Search function
-def search_docs(query, top_k=5):
-    query_embedding = get_embedding(query)
-    results = index.query(
-        vector=query_embedding,
-        top_k=top_k,
-        include_metadata=True
-    )
-    return results["matches"]
-
-# Create answer
-def generate_answer(query, context):
-    prompt = f"""You are a helpful assistant for Calbright College, a fully online California community college.
-Use only the following context to answer the question. If you don't know the answer based on the context, say so.
-
-Context:
-{context}
-
-Question: {query}
-Answer:"""
-
-    response = openai.ChatCompletion.create(
-        model="gpt-3.5-turbo",
-        messages=[
-            {"role": "system", "content": "You are a helpful assistant."},
-            {"role": "user", "content": prompt}
-        ],
-        temperature=0.3,
-        max_tokens=800
-    )
-    
-    return response["choices"][0]["message"]["content"]
-
-# Format context
-def format_context(matches):
-    context = ""
-    sources = []
-    
-    for i, match in enumerate(matches):
-        metadata = match["metadata"]
-        score = match["score"]
-        text = metadata.get("text", "No text available")
-        url = metadata.get("url", "")
-        title = metadata.get("title", "")
+# Process question when submitted
+if st.button("Submit") and question:
+    try:
+        # 1. Get embedding for the query
+        with st.spinner("Processing..."):
+            embedding_response = openai.Embedding.create(
+                input=question,
+                model="text-embedding-ada-002"
+            )
+            embedding = embedding_response["data"][0]["embedding"]
         
-        context += f"\nDocument {i+1}:\n{text}\n"
-        sources.append((title, url, score))
-    
-    return context, sources
-
-# Main app function
-def main():
-    st.write("Ask questions about Calbright College's programs, services, and resources.")
-    
-    query = st.text_input("Your question:")
-    
-    if st.button("Ask") and query:
-        with st.spinner("Searching for information..."):
-            try:
-                # Search for documents
-                matches = search_docs(query)
-                
-                if not matches:
-                    st.warning("No relevant information found.")
-                    return
-                
-                # Format the context and extract sources
-                context, sources = format_context(matches)
-                
-                # Generate the answer
-                answer = generate_answer(query, context)
-                
-                # Display the answer
-                st.subheader("Answer:")
-                st.write(answer)
-                
-                # Display sources
-                st.subheader("Sources:")
-                for i, (title, url, score) in enumerate(sources):
-                    st.markdown(f"**Source {i+1}:** {title}")
-                    st.markdown(f"**URL:** {url}")
-                    st.markdown(f"**Relevance:** {score:.2f}")
-                    st.markdown("---")
-                    
-            except Exception as e:
-                st.error(f"An error occurred: {e}")
-    
-if __name__ == "__main__":
-    main()
+        # 2. Query Pinecone
+        with st.spinner("Searching knowledge base..."):
+            query_response = index.query(
+                vector=embedding,
+                top_k=3,
+                include_metadata=True
+            )
+            
+        # 3. Format results into context
+        context = ""
+        sources = []
+        
+        for i, match in enumerate(query_response["matches"]):
+            metadata = match["metadata"]
+            text = metadata.get("text", "")
+            url = metadata.get("url", "")
+            title = metadata.get("title", "")
+            context += f"\n## Document {i+1}:\n{text}\n"
+            sources.append((title, url))
+        
+        # 4. Generate answer with OpenAI
+        with st.spinner("Generating answer..."):
+            completion = openai.ChatCompletion.create(
+                model="gpt-3.5-turbo",
+                messages=[
+                    {"role": "system", "content": "You are a helpful assistant for Calbright College. Answer questions about the college based ONLY on the provided context."},
+                    {"role": "user", "content": f"Context:\n{context}\n\nQuestion: {question}\n\nAnswer:"}
+                ],
+                temperature=0.2
+            )
+            
+            answer = completion["choices"][0]["message"]["content"]
+        
+        # 5. Display answer and sources
+        st.subheader("Answer")
+        st.write(answer)
+        
+        st.subheader("Sources")
+        for i, (title, url) in enumerate(sources):
+            st.write(f"{i+1}. {title}")
+            st.write(f"   URL: {url}")
+            
+    except Exception as e:
+        st.error(f"Error: {e}")
+        st.write("Please try again with a different question.")
