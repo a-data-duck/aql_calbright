@@ -1,85 +1,172 @@
 import streamlit as st
-import openai
-import pinecone
+import json
+import requests
 
-# Simple app with minimal dependencies
+# Set title
 st.title("Calbright College Q&A")
 
-# API keys
-try:
-    openai.api_key = st.secrets["OPENAI_API_KEY"]
-    pinecone_api_key = st.secrets["PINECONE_API_KEY"] 
-    pinecone_index = st.secrets.get("PINECONE_INDEX_NAME", "calbright-docs")
-except Exception as e:
-    st.error(f"API key error: {e}")
+# Configure API keys
+OPENAI_API_KEY = st.secrets.get("OPENAI_API_KEY", "")
+PINECONE_API_KEY = st.secrets.get("PINECONE_API_KEY", "")
+PINECONE_INDEX_NAME = st.secrets.get("PINECONE_INDEX_NAME", "calbright-docs")
+PINECONE_ENV = "us-east-1"
+
+if not OPENAI_API_KEY or not PINECONE_API_KEY:
+    st.error("Missing API keys. Please set them in your Streamlit secrets.")
     st.stop()
 
-# Initialize Pinecone (older API style)
-try:
-    pinecone.init(api_key=pinecone_api_key, environment="us-east-1")
-    index = pinecone.Index(pinecone_index)
-    st.success("Connected to services")
-except Exception as e:
-    st.error(f"Pinecone error: {e}")
-    st.info("Check your API keys and index name")
-    st.stop()
+# Function to get embedding directly via API
+def get_embedding(text):
+    headers = {
+        "Content-Type": "application/json",
+        "Authorization": f"Bearer {OPENAI_API_KEY}"
+    }
+    
+    data = {
+        "input": text,
+        "model": "text-embedding-ada-002"
+    }
+    
+    response = requests.post(
+        "https://api.openai.com/v1/embeddings",
+        headers=headers,
+        json=data
+    )
+    
+    if response.status_code != 200:
+        st.error(f"OpenAI API error: {response.text}")
+        return None
+    
+    result = response.json()
+    return result["data"][0]["embedding"]
+
+# Function to query Pinecone directly via API
+def query_pinecone(vector, top_k=3):
+    headers = {
+        "Content-Type": "application/json",
+        "Api-Key": PINECONE_API_KEY
+    }
+    
+    data = {
+        "vector": vector,
+        "top_k": top_k,
+        "include_metadata": True
+    }
+    
+    response = requests.post(
+        f"https://https://{PINECONE_INDEX_NAME}-{PINECONE_ENV}.svc.{PINECONE_ENV}.pinecone.io/query",
+        headers=headers,
+        json=data
+    )
+    
+    if response.status_code != 200:
+        st.error(f"Pinecone API error: {response.text}")
+        return []
+    
+    result = response.json()
+    return result.get("matches", [])
+
+# Function to generate answer via OpenAI API
+def generate_answer(question, context):
+    headers = {
+        "Content-Type": "application/json",
+        "Authorization": f"Bearer {OPENAI_API_KEY}"
+    }
+    
+    data = {
+        "model": "gpt-3.5-turbo",
+        "messages": [
+            {
+                "role": "system", 
+                "content": "You are a helpful assistant for Calbright College, a fully online California community college. Answer questions based ONLY on the provided context."
+            },
+            {
+                "role": "user", 
+                "content": f"Context:\n{context}\n\nQuestion: {question}\n\nAnswer:"
+            }
+        ],
+        "temperature": 0.2
+    }
+    
+    response = requests.post(
+        "https://api.openai.com/v1/chat/completions",
+        headers=headers,
+        json=data
+    )
+    
+    if response.status_code != 200:
+        st.error(f"OpenAI API error: {response.text}")
+        return "Sorry, I couldn't generate an answer."
+    
+    result = response.json()
+    return result["choices"][0]["message"]["content"]
+
+# Main interface
+st.write("Ask questions about Calbright College's programs, services, and more.")
+
+# Example questions
+st.sidebar.header("Example Questions")
+examples = [
+    "Who provides wellness services at Calbright?",
+    "What programs does Calbright offer?",
+    "Is Calbright College free?",
+    "How long does it take to complete a program?"
+]
+
+selected_example = st.sidebar.selectbox("Try an example:", [""] + examples)
 
 # Question input
-question = st.text_input("What would you like to know about Calbright College?")
+question = st.text_input("Your question:", value=selected_example)
 
-# Process question when submitted
-if st.button("Submit") and question:
-    try:
-        # 1. Get embedding for the query
-        with st.spinner("Processing..."):
-            embedding_response = openai.Embedding.create(
-                input=question,
-                model="text-embedding-ada-002"
-            )
-            embedding = embedding_response["data"][0]["embedding"]
-        
-        # 2. Query Pinecone
-        with st.spinner("Searching knowledge base..."):
-            query_response = index.query(
-                vector=embedding,
-                top_k=3,
-                include_metadata=True
-            )
-            
-        # 3. Format results into context
-        context = ""
-        sources = []
-        
-        for i, match in enumerate(query_response["matches"]):
-            metadata = match["metadata"]
-            text = metadata.get("text", "")
-            url = metadata.get("url", "")
-            title = metadata.get("title", "")
-            context += f"\n## Document {i+1}:\n{text}\n"
-            sources.append((title, url))
-        
-        # 4. Generate answer with OpenAI
-        with st.spinner("Generating answer..."):
-            completion = openai.ChatCompletion.create(
-                model="gpt-3.5-turbo",
-                messages=[
-                    {"role": "system", "content": "You are a helpful assistant for Calbright College. Answer questions about the college based ONLY on the provided context."},
-                    {"role": "user", "content": f"Context:\n{context}\n\nQuestion: {question}\n\nAnswer:"}
-                ],
-                temperature=0.2
-            )
-            
-            answer = completion["choices"][0]["message"]["content"]
-        
-        # 5. Display answer and sources
-        st.subheader("Answer")
-        st.write(answer)
-        
-        st.subheader("Sources")
-        for i, (title, url) in enumerate(sources):
-            st.write(f"{i+1}. {title}")
-            st.write(f"   URL: {url}")
-            
-    except Exception as e:
-        st.error(f"Error: {e}")
-        st.write("Please try again with a different question.")
+if st.button("Submit"):
+    if not question:
+        st.warning("Please enter a question.")
+    else:
+        try:
+            with st.spinner("Searching for information..."):
+                # 1. Generate embedding
+                embedding = get_embedding(question)
+                if not embedding:
+                    st.error("Could not generate embedding.")
+                    st.stop()
+                
+                # 2. Query Pinecone
+                matches = query_pinecone(embedding)
+                if not matches:
+                    st.warning("No relevant information found.")
+                    st.stop()
+                
+                # 3. Format context
+                context = ""
+                sources = []
+                
+                for i, match in enumerate(matches):
+                    metadata = match.get("metadata", {})
+                    text = metadata.get("text", "No text available")
+                    url = metadata.get("url", "")
+                    title = metadata.get("title", "")
+                    
+                    context += f"\nDocument {i+1}:\n{text}\n"
+                    sources.append((title, url))
+                
+                # 4. Generate answer
+                answer = generate_answer(question, context)
+                
+                # 5. Display answer
+                st.subheader("Answer")
+                st.write(answer)
+                
+                # 6. Display sources
+                st.subheader("Sources")
+                for i, (title, url) in enumerate(sources):
+                    st.write(f"{i+1}. {title}")
+                    st.write(f"URL: {url}")
+                    st.write("---")
+                
+        except Exception as e:
+            st.error(f"An error occurred: {str(e)}")
+            st.write("Please try again later.")
+
+# Footer
+st.sidebar.markdown("---")
+st.sidebar.info("This is a demo of a Calbright College information chatbot.")
