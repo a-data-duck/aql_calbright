@@ -1,243 +1,96 @@
+import os
 import streamlit as st
-import json
-import requests
+import pinecone
+from langchain.embeddings import OpenAIEmbeddings
+from langchain.vectorstores import Pinecone as LC_Pinecone
+from langchain.chat_models import ChatOpenAI
+from langchain.chains import RetrievalQA
 
-# Set title
-st.title("Calbright College Q&A")
-
-# Configure API keys
-OPENAI_API_KEY = st.secrets.get("OPENAI_API_KEY", "")
-PINECONE_API_KEY = st.secrets.get("PINECONE_API_KEY", "")
-PINECONE_INDEX_NAME = st.secrets.get("PINECONE_INDEX_NAME", "calbright-docs")
-
-if not OPENAI_API_KEY or not PINECONE_API_KEY:
-    st.error("Missing API keys. Please set them in your Streamlit secrets.")
-    st.stop()
-
-# Function to get embedding directly via API
-def get_embedding(text):
-    headers = {
-        "Content-Type": "application/json",
-        "Authorization": f"Bearer {OPENAI_API_KEY}"
-    }
-    
-    data = {
-        "input": text,
-        "model": "text-embedding-ada-002"
-    }
-    
-    response = requests.post(
-        "https://api.openai.com/v1/embeddings",
-        headers=headers,
-        json=data
-    )
-    
-    if response.status_code != 200:
-        st.error(f"OpenAI API error: {response.text}")
-        return None
-    
-    result = response.json()
-    return result["data"][0]["embedding"]
-
-# Function to query Pinecone directly via API
-def query_pinecone(vector, base_url, top_k=3):
-    # Make sure the URL ends with /query
-    if not base_url.endswith("/query"):
-        query_url = f"{base_url}/query"
-    else:
-        query_url = base_url
-    
-    headers = {
-        "Content-Type": "application/json",
-        "Api-Key": PINECONE_API_KEY
-    }
-    
-    data = {
-        "vector": vector,
-        "top_k": top_k,
-        "include_metadata": True
-    }
-    
-    # Removed debug info
-    
-    try:
-        response = requests.post(
-            query_url,
-            headers=headers,
-            json=data,
-            timeout=10  # Add timeout
-        )
-        
-        # Removed status code output
-        
-        if response.status_code != 200:
-            st.error(f"Pinecone API error: {response.text}")
-            return []
-        
-        # Check if response is empty
-        if not response.text:
-            st.error("Pinecone returned an empty response")
-            return []
-            
-        # Try to parse the JSON
-        try:
-            result = response.json()
-            return result.get("matches", [])
-        except json.JSONDecodeError as e:
-            st.error(f"Failed to parse JSON: {e}")
-            st.write(f"Raw response: {response.text[:500]}...")  # Show first 500 chars
-            return []
-            
-    except requests.exceptions.RequestException as e:
-        st.error(f"Request error: {e}")
-        return []
-
-# Function to generate answer via OpenAI API
-def generate_answer(question, context):
-    headers = {
-        "Content-Type": "application/json",
-        "Authorization": f"Bearer {OPENAI_API_KEY}"
-    }
-    
-    data = {
-        "model": "gpt-3.5-turbo",
-        "messages": [
-            {
-                "role": "system", 
-                "content": "You are a helpful assistant for Calbright College, a fully online California community college. Answer questions based ONLY on the provided context."
-            },
-            {
-                "role": "user", 
-                "content": f"Context:\n{context}\n\nQuestion: {question}\n\nAnswer:"
-            }
-        ],
-        "temperature": 0.2
-    }
-    
-    response = requests.post(
-        "https://api.openai.com/v1/chat/completions",
-        headers=headers,
-        json=data
-    )
-    
-    if response.status_code != 200:
-        st.error(f"OpenAI API error: {response.text}")
-        return "Sorry, I couldn't generate an answer."
-    
-    result = response.json()
-    return result["choices"][0]["message"]["content"]
-
-# Pinecone configuration
-st.sidebar.header("Pinecone Configuration")
-pinecone_url = st.sidebar.text_input(
-    "Pinecone URL:",
-    value="https://calbright-docs-h3y3rrq.svc.aped-4627-b74a.pinecone.io"
+# === Streamlit page config ===
+st.set_page_config(
+    page_title="Calbright College Q&A",
+    page_icon="🎓",
+    layout="centered",
 )
 
-# Test Pinecone connection button
-if st.sidebar.button("Test Pinecone Connection"):
-    test_headers = {
-        "Content-Type": "application/json",
-        "Api-Key": PINECONE_API_KEY
-    }
-    
-    # Try adding /query if not present
-    if not pinecone_url.endswith("/query"):
-        test_url = f"{pinecone_url}/query"
-    else:
-        test_url = pinecone_url
-    
-    try:
-        # Just a simple describe request to test connection
-        test_vector = [0.0] * 1536  # Sample embedding with all zeros
-        test_data = {
-            "vector": test_vector,
-            "top_k": 1
-        }
-        
-        test_response = requests.post(
-            test_url,
-            headers=test_headers,
-            json=test_data,
-            timeout=10
-        )
-        
-        st.sidebar.write(f"Status: {test_response.status_code}")
-        
-        if test_response.status_code == 200:
-            st.sidebar.success("Successfully connected to Pinecone!")
-        else:
-            st.sidebar.error(f"Failed to connect: {test_response.text}")
-        
-    except Exception as e:
-        st.sidebar.error(f"Connection error: {str(e)}")
+# === Custom CSS for Calbright theme & hide sidebar by default ===
+calbright_blue = "#005aad"
+calbright_gold = "#ffd100"
+hide_sidebar_css = """
+<style>
+    /* Hide default menu and footer */
+    #MainMenu {visibility: hidden;} 
+    footer {visibility: hidden;} 
+    /* Primary color for buttons/text */
+    .stButton>button {background-color: %s; color: white; border: none;} 
+    .st-badge {background-color: %s; color: white;} 
+    /* Heading color */
+    h1, h2, h3 {color: %s;} 
+</style>
+""" % (calbright_blue, calbright_blue, calbright_blue)
+st.markdown(hide_sidebar_css, unsafe_allow_html=True)
 
-# Main interface
-st.write("Ask questions about Calbright College's programs, services, and more.")
+# === Secrets/config ===
+OPENAI_API_KEY = st.secrets.get("OPENAI_API_KEY")
+PINECONE_API_KEY = st.secrets.get("PINECONE_API_KEY")
+PINECONE_ENV = st.secrets.get("PINECONE_ENV", "us-west1-gcp")
+INDEX_NAME = st.secrets.get("PINECONE_INDEX_NAME", "calbright-docs")
 
-# Example questions
-st.sidebar.header("Example Questions")
-examples = [
-    "Who provides wellness services at Calbright?",
-    "What programs does Calbright offer?",
-    "Is Calbright College free?",
-    "How long does it take to complete a program?"
-]
+if not OPENAI_API_KEY or not PINECONE_API_KEY:
+    st.error("API keys not configured. Please set OPENAI_API_KEY and PINECONE_API_KEY in your app secrets.")
+    st.stop()
 
-selected_example = st.sidebar.selectbox("Try an example:", [""] + examples)
+# === Sidebar (collapsed by default) ===
+with st.sidebar.expander("🔧 Configuration", expanded=False):
+    st.write("**Pinecone Settings**")
+    pinecone_url = st.text_input(
+        "Pinecone URL:",
+        value=st.secrets.get("PINECONE_URL", "https://calbright-docs-h3y3rrq.svc.aped-4627-b74a.pinecone.io")
+    )
+    if st.button("Test Pinecone Connection"):
+        try:
+            pinecone.init(api_key=PINECONE_API_KEY, environment=PINECONE_ENV)
+            idx = pinecone.Index(INDEX_NAME)
+            # simple metadata fetch
+            idx.describe_index_stats()
+            st.success("Successfully connected to Pinecone!")
+        except Exception as e:
+            st.error(f"Connection error: {e}")
 
-# Question input
-question = st.text_input("Your question:", value=selected_example)
+# === Initialize Pinecone & LangChain QA ===
+pinecone.init(api_key=PINECONE_API_KEY, environment=PINECONE_ENV)
+index = pinecone.Index(INDEX_NAME)
 
-if st.button("Submit"):
-    if not question:
+embeddings = OpenAIEmbeddings()
+vectorstore = LC_Pinecone(index=index, embedding=embeddings, text_key="text")
+retriever = vectorstore.as_retriever(search_kwargs={"k": 5})
+llm = ChatOpenAI(temperature=0, model_name="gpt-3.5-turbo")
+qa = RetrievalQA.from_chain_type(
+    llm=llm,
+    retriever=retriever,
+    chain_type="stuff",
+    return_source_documents=True
+)
+
+# === Main UI ===
+st.title("🎓 Calbright College Q&A")
+st.write("Ask questions about admissions, programs, and services at Calbright College.")
+query = st.text_input("Enter your question:")
+
+if st.button("Ask"):
+    if not query:
         st.warning("Please enter a question.")
     else:
-        try:
-            with st.spinner("Searching for information..."):
-                # 1. Generate embedding
-                embedding = get_embedding(question)
-                if not embedding:
-                    st.error("Could not generate embedding.")
-                    st.stop()
-                
-                # 2. Query Pinecone
-                matches = query_pinecone(embedding, pinecone_url)
-                if not matches:
-                    st.warning("No relevant information found. Please check the Pinecone connection.")
-                    st.stop()
-                
-                # 3. Format context
-                context = ""
-                sources = []
-                
-                for i, match in enumerate(matches):
-                    metadata = match.get("metadata", {})
-                    text = metadata.get("text", "No text available")
-                    url = metadata.get("url", "")
-                    title = metadata.get("title", "")
-                    
-                    context += f"\nDocument {i+1}:\n{text}\n"
-                    sources.append((title, url))
-                
-                # 4. Generate answer
-                answer = generate_answer(question, context)
-                
-                # 5. Display answer
-                st.subheader("Answer")
-                st.write(answer)
-                
-                # 6. Display sources
-                st.subheader("Sources")
-                for i, (title, url) in enumerate(sources):
-                    st.write(f"{i+1}. {title}")
-                    st.write(f"URL: {url}")
-                    st.write("---")
-                
-        except Exception as e:
-            st.error(f"An error occurred: {str(e)}")
-            st.write("Please try again later.")
+        with st.spinner("Retrieving answer..."):
+            result = qa(query)
+            answer = result.get("result") or result.get("output_text")
+            docs = result.get("source_documents", [])
 
-# Footer
-st.sidebar.markdown("---")
-st.sidebar.info("This is a demo of a Calbright College information chatbot.")
+        st.subheader("Answer")
+        st.markdown(f"<div style='background-color:{calbright_gold}; padding:10px; border-radius:5px;'>**{answer}**</div>", unsafe_allow_html=True)
+
+        if docs:
+            st.subheader("Sources")
+            for doc in docs:
+                md = doc.metadata
+                st.markdown(f"- **{md.get('title','')}** (<a href='{md.get('url','')}' target='_blank'>link</a>) -- chunk {md.get('chunk_index','')}")
