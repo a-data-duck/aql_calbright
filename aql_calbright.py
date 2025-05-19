@@ -8,7 +8,7 @@ st.set_page_config(page_title="Calbright College Q&A", page_icon="🎓", initial
 # Add logo in the upper right corner
 st.markdown("""
 <img src="https://www.calbright.edu/wp-content/uploads/2022/06/calbright_logo-post-sq-white.png?text=Logo" style="position: absolute; top: 20px; right: 20px; width: 80px; z-index: 1000;">
-<img src="https://images.squarespace-cdn.com/content/v1/656e9dc18baa570fb2025966/7bd67e53-0a11-4847-b106-30e1b9e3f42c/AQL-logo-new-48px2x.png" style="position: absolute; top: 40px; left: 20px; width: 80px; z-index: 1000;">
+<img src="https://images.squarespace-cdn.com/content/v1/656e9dc18baa570fb2025966/7bd67e53-0a11-4847-b106-30e1b9e3f42c/AQL-logo-new-48px2x.png" style="position: absolute; top: 50px; left: 20px; width: 80px; z-index: 1000;">
 """, unsafe_allow_html=True)
 
 # Custom CSS to hide the sidebar completely
