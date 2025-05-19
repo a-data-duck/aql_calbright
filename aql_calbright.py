@@ -77,6 +77,7 @@ if "question" not in st.session_state:
     st.session_state.question = ""
 
 # Set title
+st.title(" ")
 st.title("Calbright College Q&A")
 
 # Configure API keys (now hidden from sidebar)
